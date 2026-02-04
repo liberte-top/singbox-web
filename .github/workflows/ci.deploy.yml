@@ -1,0 +1,104 @@
+name: deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "GitHub environment name"
+        type: string
+        required: false
+        default: "prod"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest
+            type=sha,format=short
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Checkout kubernetes manifests
+        uses: actions/checkout@v4
+        with:
+          repository: liberte-top/kubernetes
+          path: kubernetes
+
+      - name: Pack singbox-web manifests
+        run: |
+          set -euo pipefail
+          tar -czf singbox-web.tgz -C kubernetes/service/singbox/web .
+
+      - name: Upload singbox-web manifests
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "singbox-web.tgz"
+          target: "/tmp"
+          overwrite: true
+
+      - name: Apply manifests
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -euo pipefail
+            KUBECTL=/usr/local/bin/kubectl
+            KUBECONFIG=/home/k8s-admin/.kube/config
+            KUBE_NAMESPACE=service
+            KUBE="${KUBECTL} --kubeconfig ${KUBECONFIG}"
+            install -d -m 0755 /home/k8s-admin/kubernetes/service/singbox/web
+            tar -xzf /tmp/singbox-web.tgz -C /home/k8s-admin/kubernetes/service/singbox/web
+            ${KUBE} apply -k /home/k8s-admin/kubernetes/service/singbox/web
+            TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+            sudo install -d -m 0755 /var/log/infra
+            echo "${TS} singbox-web latest ${GITHUB_RUN_ID:-unknown}" | sudo tee -a /var/log/infra/auth-deploy.log >/dev/null
+
+      - name: E2E check (k8s)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -euo pipefail
+            KUBECTL=/usr/local/bin/kubectl
+            KUBECONFIG=/home/k8s-admin/.kube/config
+            KUBE_NAMESPACE=service
+            KUBE="${KUBECTL} --kubeconfig ${KUBECONFIG}"
+            KUBE_N="${KUBE} -n ${KUBE_NAMESPACE}"
+            ${KUBE_N} rollout status deploy/singbox-web --timeout=60s
