@@ -57,7 +57,7 @@ jobs:
       - name: Pack singbox-web manifests
         run: |
           set -euo pipefail
-          tar -czf singbox-web.tgz -C kubernetes/service/singbox/web .
+          tar -czf singbox-web.tgz -C kubernetes/manifests/service/singbox/web .
 
       - name: Upload singbox-web manifests
         uses: appleboy/scp-action@v0.1.7
@@ -81,9 +81,9 @@ jobs:
             KUBECONFIG=/home/k8s-admin/.kube/config
             KUBE_NAMESPACE=service
             KUBE="${KUBECTL} --kubeconfig ${KUBECONFIG}"
-            install -d -m 0755 /home/k8s-admin/kubernetes/service/singbox/web
-            tar -xzf /tmp/singbox-web.tgz -C /home/k8s-admin/kubernetes/service/singbox/web
-            ${KUBE} apply -k /home/k8s-admin/kubernetes/service/singbox/web
+            install -d -m 0755 /home/k8s-admin/kubernetes/manifests/service/singbox/web
+            tar -xzf /tmp/singbox-web.tgz -C /home/k8s-admin/kubernetes/manifests/service/singbox/web
+            ${KUBE} apply -k /home/k8s-admin/kubernetes/manifests/service/singbox/web
             TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
             sudo install -d -m 0755 /var/log/infra
             echo "${TS} singbox-web latest ${GITHUB_RUN_ID:-unknown}" | sudo tee -a /var/log/infra/singbox-web.deploy.log >/dev/null
